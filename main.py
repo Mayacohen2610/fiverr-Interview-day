@@ -1,3 +1,7 @@
+"""
+FastAPI application with a /health endpoint that checks PostgreSQL connectivity.
+Returns {"status": "up"} when the database is reachable, {"status": "down"} otherwise.
+"""
 from fastapi import FastAPI
 from sqlalchemy import create_engine, text
 

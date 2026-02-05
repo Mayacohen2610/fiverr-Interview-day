@@ -1,3 +1,7 @@
+"""
+Simple script to verify the connection to a local PostgreSQL database.
+Uses SQLAlchemy to execute SELECT 1 and prints success or the error message.
+"""
 from sqlalchemy import create_engine, text
 
 try:

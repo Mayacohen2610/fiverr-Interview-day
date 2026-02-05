@@ -1,3 +1,7 @@
+"""
+Creates a test_table in PostgreSQL, inserts one row, fetches it, and prints the result.
+Demonstrates basic SQLAlchemy usage for table creation, insert, and select operations.
+"""
 from sqlalchemy import create_engine, text
 
 engine = create_engine("postgresql://admin:admin123@localhost:5432/fiverr_db")

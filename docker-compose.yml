@@ -1,3 +1,5 @@
+# PostgreSQL 15 database with persistent storage.
+# Credentials: admin/admin123, database: fiverr_db, port 5432.
 services:
   postgres:
     image: postgres:15
