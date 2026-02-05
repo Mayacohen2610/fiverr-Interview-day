@@ -3,7 +3,7 @@
 .venv/
 venv/
 env/
-
+notes.md
 # Python
 __pycache__/
 *.py[cod]
