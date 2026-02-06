@@ -27,11 +27,17 @@ def check_db_connection() -> bool:
 
 def get_all_toys(db: Session) -> list[dict]:
     """
-    Returns all toys from the toys table.
-    Each toy includes id, toy_name, category, price, and in_stock.
+    Returns all toys from the toys table with supplier information.
+    Each toy includes id, toy_name, category, price, in_stock, supplier_id, and supplier details.
     """
     result = db.execute(
-        text("SELECT id, toy_name, category, price, in_stock FROM toys ORDER BY id")
+        text("""
+            SELECT t.id, t.toy_name, t.category, t.price, t.in_stock, t.supplier_id,
+                   s.id as s_id, s.name, s.email, s.specialty
+            FROM toys t
+            LEFT JOIN suppliers s ON t.supplier_id = s.id
+            ORDER BY t.id
+        """)
     )
     rows = result.fetchall()
     return [
@@ -41,6 +47,13 @@ def get_all_toys(db: Session) -> list[dict]:
             "category": row[2],
             "price": row[3],
             "in_stock": row[4],
+            "supplier_id": row[5],
+            "supplier": {
+                "id": row[6],
+                "name": row[7],
+                "email": row[8],
+                "specialty": row[9],
+            } if row[6] is not None else None,
         }
         for row in rows
     ]
@@ -48,20 +61,42 @@ def get_all_toys(db: Session) -> list[dict]:
 
 def create_toy(db: Session, toy: schemas.ToyCreate) -> dict:
     """
-    Inserts a new toy into the toys table.
+    Inserts a new toy into the toys table with supplier validation.
+    Validates that:
+    1. The supplier exists
+    2. The supplier's specialty matches the toy's category
     Returns the created toy with its assigned id.
+    Raises ValueError if validation fails.
     """
+    # Validate supplier exists and specialty matches category
+    result = db.execute(
+        text("SELECT specialty FROM suppliers WHERE id = :supplier_id"),
+        {"supplier_id": toy.supplier_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        raise ValueError(f"Supplier with id {toy.supplier_id} does not exist")
+    
+    supplier_specialty = row[0]
+    if supplier_specialty != toy.category:
+        raise ValueError(
+            f'Supplier specialty "{supplier_specialty}" does not match toy category "{toy.category}". '
+            f"A supplier can only provide toys in their specialty category."
+        )
+    
+    # Insert toy with supplier_id
     result = db.execute(
         text("""
-            INSERT INTO toys (toy_name, category, price, in_stock)
-            VALUES (:toy_name, :category, :price, :in_stock)
-            RETURNING id, toy_name, category, price, in_stock
+            INSERT INTO toys (toy_name, category, price, in_stock, supplier_id)
+            VALUES (:toy_name, :category, :price, :in_stock, :supplier_id)
+            RETURNING id, toy_name, category, price, in_stock, supplier_id
         """),
         {
             "toy_name": toy.toy_name,
             "category": toy.category,
             "price": toy.price,
             "in_stock": toy.in_stock,
+            "supplier_id": toy.supplier_id,
         },
     )
     db.commit()
@@ -72,16 +107,51 @@ def create_toy(db: Session, toy: schemas.ToyCreate) -> dict:
         "category": row[2],
         "price": row[3],
         "in_stock": row[4],
+        "supplier_id": row[5],
     }
 
 
 def update_toy(db: Session, toy_id: int, update: schemas.ToyUpdate) -> dict | None:
     """
     Partially updates a toy by id. Only provided fields are updated.
+    If supplier_id is being updated, validates that:
+    1. The new supplier exists
+    2. The supplier's specialty matches the toy's category
     Returns the updated toy dict, or None if no toy exists with the given id.
+    Raises ValueError if supplier validation fails.
     Caller must ensure at least one field is provided.
     """
     updates = update.model_dump(exclude_unset=True)
+    
+    # If supplier_id is being updated, validate it
+    if "supplier_id" in updates:
+        # Get toy's category
+        result = db.execute(
+            text("SELECT category FROM toys WHERE id = :toy_id"),
+            {"toy_id": toy_id},
+        )
+        toy_row = result.fetchone()
+        if toy_row is None:
+            return None  # Toy doesn't exist
+        
+        toy_category = toy_row[0]
+        
+        # Validate supplier exists and specialty matches
+        result = db.execute(
+            text("SELECT specialty FROM suppliers WHERE id = :supplier_id"),
+            {"supplier_id": updates["supplier_id"]},
+        )
+        supplier_row = result.fetchone()
+        if supplier_row is None:
+            raise ValueError(f"Supplier with id {updates['supplier_id']} does not exist")
+        
+        supplier_specialty = supplier_row[0]
+        if supplier_specialty != toy_category:
+            raise ValueError(
+                f'Supplier specialty "{supplier_specialty}" does not match toy category "{toy_category}". '
+                f"A supplier can only provide toys in their specialty category."
+            )
+    
     set_parts = [f"{k} = :{k}" for k in updates.keys()]
     set_clause = ", ".join(set_parts)
     params = dict(updates, toy_id=toy_id)
@@ -91,7 +161,7 @@ def update_toy(db: Session, toy_id: int, update: schemas.ToyUpdate) -> dict | No
             UPDATE toys
             SET {set_clause}
             WHERE id = :toy_id
-            RETURNING id, toy_name, category, price, in_stock
+            RETURNING id, toy_name, category, price, in_stock, supplier_id
         """),
         params,
     )
@@ -105,6 +175,7 @@ def update_toy(db: Session, toy_id: int, update: schemas.ToyUpdate) -> dict | No
         "category": row[2],
         "price": row[3],
         "in_stock": row[4],
+        "supplier_id": row[5],
     }
 
 
@@ -213,6 +284,187 @@ def get_toys_by_price_range(
             "category": row[2],
             "price": row[3],
             "in_stock": row[4],
+        }
+        for row in rows
+    ]
+
+
+# ============================================================================
+# Supplier CRUD Operations
+# ============================================================================
+
+
+def get_all_suppliers(db: Session) -> list[dict]:
+    """
+    Returns all suppliers from the suppliers table.
+    Each supplier includes id, name, email, and specialty.
+    """
+    result = db.execute(
+        text("SELECT id, name, email, specialty FROM suppliers ORDER BY id")
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "specialty": row[3],
+        }
+        for row in rows
+    ]
+
+
+def get_supplier_by_id(db: Session, supplier_id: int) -> dict | None:
+    """
+    Returns a single supplier by id with toy count.
+    Returns None if supplier doesn't exist.
+    """
+    result = db.execute(
+        text("""
+            SELECT s.id, s.name, s.email, s.specialty, COUNT(t.id) as toy_count
+            FROM suppliers s
+            LEFT JOIN toys t ON s.id = t.supplier_id
+            WHERE s.id = :supplier_id
+            GROUP BY s.id, s.name, s.email, s.specialty
+        """),
+        {"supplier_id": supplier_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "specialty": row[3],
+        "toy_count": row[4],
+    }
+
+
+def create_supplier(db: Session, supplier: schemas.SupplierCreate) -> dict:
+    """
+    Inserts a new supplier into the suppliers table.
+    Email validation is handled by Pydantic EmailStr.
+    Returns the created supplier with its assigned id.
+    Raises exception if supplier name already exists (unique constraint).
+    """
+    result = db.execute(
+        text("""
+            INSERT INTO suppliers (name, email, specialty)
+            VALUES (:name, :email, :specialty)
+            RETURNING id, name, email, specialty
+        """),
+        {
+            "name": supplier.name,
+            "email": supplier.email,
+            "specialty": supplier.specialty,
+        },
+    )
+    db.commit()
+    row = result.fetchone()
+    return {
+        "id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "specialty": row[3],
+    }
+
+
+def update_supplier(
+    db: Session, supplier_id: int, update: schemas.SupplierUpdate
+) -> dict | None:
+    """
+    Partially updates a supplier by id. Only provided fields are updated.
+    Returns the updated supplier dict, or None if no supplier exists with the given id.
+    Email re-validation is handled by Pydantic if email is changed.
+    """
+    updates = update.model_dump(exclude_unset=True)
+    if not updates:
+        return None  # No updates provided
+    
+    set_parts = [f"{k} = :{k}" for k in updates.keys()]
+    set_clause = ", ".join(set_parts)
+    params = dict(updates, supplier_id=supplier_id)
+
+    result = db.execute(
+        text(f"""
+            UPDATE suppliers
+            SET {set_clause}
+            WHERE id = :supplier_id
+            RETURNING id, name, email, specialty
+        """),
+        params,
+    )
+    db.commit()
+    row = result.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "name": row[1],
+        "email": row[2],
+        "specialty": row[3],
+    }
+
+
+def delete_supplier(db: Session, supplier_id: int) -> bool:
+    """
+    Deletes a supplier by id.
+    Returns False if supplier has toys (foreign key constraint prevents deletion).
+    Returns False if supplier doesn't exist.
+    Returns True if deletion successful.
+    """
+    # Check if supplier has toys
+    result = db.execute(
+        text("SELECT COUNT(*) FROM toys WHERE supplier_id = :supplier_id"),
+        {"supplier_id": supplier_id},
+    )
+    toy_count = result.fetchone()[0]
+    if toy_count > 0:
+        return False  # Cannot delete supplier with toys
+    
+    # Delete supplier
+    result = db.execute(
+        text("DELETE FROM suppliers WHERE id = :supplier_id RETURNING id"),
+        {"supplier_id": supplier_id},
+    )
+    db.commit()
+    deleted_row = result.fetchone()
+    return deleted_row is not None
+
+
+# ============================================================================
+# Report Functions
+# ============================================================================
+
+
+def get_critical_inventory(db: Session) -> list[dict]:
+    """
+    Returns critical inventory items from the critical_inventory_view.
+    Critical items are:
+    - Toys that are out of stock, OR
+    - Toys with price > 200 (high value items)
+    
+    Returns toy details with supplier contact information.
+    """
+    result = db.execute(
+        text("""
+            SELECT id, toy_name, category, price, in_stock,
+                   supplier_name, supplier_email, reason
+            FROM critical_inventory_view
+        """)
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "id": row[0],
+            "toy_name": row[1],
+            "category": row[2],
+            "price": row[3],
+            "in_stock": row[4],
+            "supplier_name": row[5],
+            "supplier_email": row[6],
+            "reason": row[7],
         }
         for row in rows
     ]

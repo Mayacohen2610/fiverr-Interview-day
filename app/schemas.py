@@ -3,7 +3,7 @@ Pydantic schemas for request/response validation.
 """
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, BeforeValidator
+from pydantic import BaseModel, EmailStr, Field, BeforeValidator
 
 
 def normalize_category_value(value: str) -> str:
@@ -18,6 +18,31 @@ def normalize_category_value(value: str) -> str:
 NormalizedCategory = Annotated[str, BeforeValidator(normalize_category_value)]
 
 
+class SupplierCreate(BaseModel):
+    """Request body for creating a new supplier."""
+
+    name: str
+    email: EmailStr
+    specialty: NormalizedCategory
+
+
+class SupplierUpdate(BaseModel):
+    """Request body for partial update of a supplier. All fields are optional."""
+
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    specialty: Optional[NormalizedCategory] = None
+
+
+class SupplierResponse(BaseModel):
+    """Response schema for a supplier."""
+
+    id: int
+    name: str
+    email: str
+    specialty: str
+
+
 class ToyCreate(BaseModel):
     """Request body for creating a new toy."""
 
@@ -25,6 +50,7 @@ class ToyCreate(BaseModel):
     category: NormalizedCategory
     price: float
     in_stock: bool = True
+    supplier_id: int
 
 
 class ToyUpdate(BaseModel):
@@ -32,6 +58,7 @@ class ToyUpdate(BaseModel):
 
     price: Optional[float] = None
     in_stock: Optional[bool] = None
+    supplier_id: Optional[int] = None
 
 
 class ToyResponse(BaseModel):
@@ -42,6 +69,8 @@ class ToyResponse(BaseModel):
     category: str
     price: float
     in_stock: bool
+    supplier_id: Optional[int] = None
+    supplier: Optional[SupplierResponse] = None
 
 
 class CategorySale(BaseModel):
@@ -49,3 +78,16 @@ class CategorySale(BaseModel):
 
     category: NormalizedCategory
     discount_percentage: int = Field(ge=1, le=90, description="Discount percentage (1-90)")
+
+
+class CriticalInventoryItem(BaseModel):
+    """Response schema for critical inventory report items."""
+
+    id: int
+    toy_name: str
+    category: str
+    price: float
+    in_stock: bool
+    supplier_name: Optional[str] = None
+    supplier_email: Optional[str] = None
+    reason: str
